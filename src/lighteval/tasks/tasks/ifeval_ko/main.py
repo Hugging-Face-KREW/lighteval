@@ -1,3 +1,24 @@
+"""
+name:
+IFEval-Ko
+
+dataset:
+allganize/IFEval-Ko
+
+abstract:
+Korean adaptation of IFEval for evaluating verifiable instruction following.
+Uses Allganize's Korean reference scoring rules.
+
+languages:
+korean
+
+tags:
+instruction-following
+
+paper:
+https://arxiv.org/abs/2311.07911
+"""
+
 import numpy as np
 
 from lighteval.metrics.metrics_sample import SampleLevelComputation
@@ -6,8 +27,10 @@ from lighteval.models.model_output import ModelResponse
 from lighteval.tasks.lighteval_task import LightevalTaskConfig
 from lighteval.tasks.requests import Doc, SamplingMethod
 from lighteval.tasks.tasks.ifeval_ko.scoring import score_response
+from lighteval.utils.imports import requires
 
 
+@requires("langdetect", "immutabledict")
 def ifeval_ko_prompt(line: dict, task_name: str = "") -> Doc:
     return Doc(
         task_name=task_name,
@@ -18,6 +41,9 @@ def ifeval_ko_prompt(line: dict, task_name: str = "") -> Doc:
         specific={
             "instructions_id_list": line["instruction_id_list"],
             "kwargs": line["kwargs"],
+            "ifeval_ko": {
+                "key": line["key"],
+            },
         },
     )
 
