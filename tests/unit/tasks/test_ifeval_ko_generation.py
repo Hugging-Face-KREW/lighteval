@@ -1,6 +1,7 @@
 """Generator compatibility and failure accounting tests without a model or MPS."""
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -34,6 +35,28 @@ class Inputs(dict):
         return self
 
 
+class Terminal(io.StringIO):
+    def __init__(self, attempts, *, success_at=None, progress_at=None, fail_summary=False, failure="write"):
+        super().__init__()
+        self.attempts = attempts
+        self.success_at = success_at
+        self.progress_at = progress_at
+        self.fail_summary = fail_summary
+        self.failure = failure
+
+    def write(self, message):
+        success_error = self.failure == "write" and self.attempts() == self.success_at and message.startswith("  ")
+        progress_error = self.progress_at is not None and message.startswith(f"[{self.progress_at}/23]")
+        if success_error or progress_error or (self.fail_summary and message.startswith("{")):
+            raise BrokenPipeError("terminal write failed")
+        return super().write(message)
+
+    def flush(self):
+        if self.failure == "flush" and self.attempts() == self.success_at:
+            raise BrokenPipeError("terminal flush failed")
+        return super().flush()
+
+
 class GenerationTests(unittest.TestCase):
     def setUp(self):
         spec = importlib.util.spec_from_file_location("_test_ifeval_ko_generator", SCRIPT)
@@ -55,7 +78,16 @@ class GenerationTests(unittest.TestCase):
             )
             instruction_index += count
 
-    def run_generation(self, *, fail_generation_at=None, fail_log_at=None, legacy_loader=False):
+    def run_generation(
+        self,
+        *,
+        fail_generation_at=None,
+        fail_log_at=None,
+        fail_progress_at=None,
+        fail_summary=False,
+        terminal_failure=None,
+        legacy_loader=False,
+    ):
         self.run_index += 1
         output = self.root / f"run-{self.run_index}"
         attempts = 0
@@ -106,10 +138,13 @@ class GenerationTests(unittest.TestCase):
             ),
         }
 
-        def log(*args, **kwargs):
-            if attempts == fail_log_at and str(args[0]).startswith("  "):
-                raise BrokenPipeError("success log failed")
-
+        terminal = Terminal(
+            lambda: attempts,
+            success_at=fail_log_at,
+            progress_at=fail_progress_at,
+            fail_summary=fail_summary,
+            failure=terminal_failure or "write",
+        )
         argv = [str(SCRIPT), "--selection", str(self.selection), "--output-dir", str(output)]
         previous_directory = Path.cwd()
         try:
@@ -119,14 +154,20 @@ class GenerationTests(unittest.TestCase):
                 patch.object(sys, "argv", argv),
                 patch.object(self.generator, "command", return_value="0"),
                 patch.object(self.generator, "version", return_value="test"),
-                patch.object(self.generator, "print", side_effect=log, create=True),
-                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stdout(terminal),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
                 code = self.generator.main()
         finally:
             os.chdir(previous_directory)
         manifest = json.loads((output / "manifest.json").read_text())
+        for line in (output / "SHA256SUMS").read_text().splitlines():
+            expected, name = line.split(maxsplit=1)
+            self.assertNotEqual(name, "SHA256SUMS")
+            self.assertEqual(hashlib.sha256((output / name).read_bytes()).hexdigest(), expected)
+        for name, expected in manifest["artifact_sha256"].items():
+            self.assertNotIn(name, ("manifest.json", "SHA256SUMS"))
+            self.assertEqual(hashlib.sha256((output / name).read_bytes()).hexdigest(), expected)
         path = output / "responses.jsonl"
         records = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
         return code, manifest, records
@@ -144,16 +185,47 @@ class GenerationTests(unittest.TestCase):
         code, manifest, records = self.run_generation(legacy_loader=True)
         self.assertEqual(code, 0)
         self.assertEqual(manifest["status"], "responses_generated")
+        self.assertEqual(manifest["logging_errors"], [])
         self.assert_accounting(manifest, records, (23, 0, 0))
 
-    def test_success_log_failure_counts_final_record_once(self):
+    def test_success_log_failure_preserves_saved_response(self):
         for index in (1, 23):
             with self.subTest(index=index):
                 code, manifest, records = self.run_generation(fail_log_at=index)
                 self.assertEqual(code, 1)
                 self.assertEqual(manifest["error"]["type"], "BrokenPipeError")
-                self.assertEqual(records[-1]["status"], "error")
-                self.assert_accounting(manifest, records, (index - 1, 1, 23 - index))
+                self.assertEqual(manifest["error_stage"], "logging")
+                self.assertEqual(manifest["logging_errors"][0]["type"], "BrokenPipeError")
+                self.assertEqual(records[-1]["status"], "generated")
+                self.assertEqual(records[-1]["response"], "test response")
+                self.assert_accounting(manifest, records, (index, 0, 23 - index))
+
+    def test_progress_log_failure_does_not_create_generation_error(self):
+        for index in (1, 7):
+            with self.subTest(index=index):
+                code, manifest, records = self.run_generation(fail_progress_at=index)
+                self.assertEqual(code, 1)
+                self.assertEqual(manifest["error_stage"], "logging")
+                self.assertEqual(len(manifest["logging_errors"]), 1)
+                self.assert_accounting(manifest, records, (index - 1, 0, 24 - index))
+
+    def test_real_tee_terminal_failure_preserves_all_saved_responses(self):
+        for failure in ("write", "flush"):
+            with self.subTest(failure=failure):
+                code, manifest, records = self.run_generation(fail_log_at=23, terminal_failure=failure)
+                self.assertEqual(code, 1)
+                self.assertEqual(manifest["error_stage"], "logging")
+                self.assertEqual(manifest["logging_errors"][0]["type"], "BrokenPipeError")
+                self.assertTrue(all(record["status"] == "generated" for record in records))
+                self.assert_accounting(manifest, records, (23, 0, 0))
+
+    def test_summary_log_failure_is_recorded_after_generation(self):
+        code, manifest, records = self.run_generation(fail_summary=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["status"], "error")
+        self.assertEqual(manifest["error_stage"], "logging")
+        self.assertEqual(len(manifest["logging_errors"]), 1)
+        self.assert_accounting(manifest, records, (23, 0, 0))
 
     def test_generation_failure_preserves_completed_and_unattempted_counts(self):
         for index in (1, 7):
@@ -161,6 +233,7 @@ class GenerationTests(unittest.TestCase):
                 code, manifest, records = self.run_generation(fail_generation_at=index)
                 self.assertEqual(code, 1)
                 self.assertEqual(manifest["error"]["type"], "RuntimeError")
+                self.assertEqual(manifest["logging_errors"], [])
                 self.assert_accounting(manifest, records, (index - 1, 1, 23 - index))
 
 

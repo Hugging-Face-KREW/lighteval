@@ -58,6 +58,25 @@ def write_json(path, value):
     temporary.replace(path)
 
 
+def log_message(manifest, message):
+    try:
+        print(message, flush=True)
+    except Exception as error:
+        manifest.setdefault("logging_errors", []).append({"type": type(error).__name__, "message": str(error)})
+        raise
+
+
+def write_artifacts(output_dir, manifest):
+    artifacts = sorted(
+        path for path in output_dir.iterdir() if path.is_file() and path.name not in {"manifest.json", "SHA256SUMS"}
+    )
+    manifest["artifact_sha256"] = {path.name: digest(path) for path in artifacts}
+    manifest_path = output_dir / "manifest.json"
+    write_json(manifest_path, manifest)
+    sums = "".join(f"{digest(path)}  {path.name}\n" for path in sorted([*artifacts, manifest_path]))
+    (output_dir / "SHA256SUMS").write_text(sums, encoding="utf-8")
+
+
 def command(*args):
     return subprocess.check_output(args, text=True).strip()
 
@@ -157,7 +176,7 @@ def generate(args, manifest):
     write_json(args.output_dir / "manifest.json", manifest)
     set_seed(0)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION, trust_remote_code=False)
-    print("Loading the pinned Qwen model on MPS...", flush=True)
+    log_message(manifest, "Loading the pinned Qwen model on MPS...")
     model = (
         AutoModelForCausalLM.from_pretrained(
             MODEL_ID, revision=MODEL_REVISION, torch_dtype=torch.float16, trust_remote_code=False
@@ -186,6 +205,7 @@ def generate(args, manifest):
     write_json(args.output_dir / "manifest.json", manifest)
     with (args.output_dir / "responses.jsonl").open("x", encoding="utf-8") as responses:
         for index, row in enumerate(rows, 1):
+            log_message(manifest, f"[{index}/23] Generating key {row['key']}...")
             record = copy.deepcopy(row)
             record["status"] = "started"
             try:
@@ -195,7 +215,6 @@ def generate(args, manifest):
                 record.update(rendered_input=rendered, input_token_ids=inputs["input_ids"][0].tolist())
                 if len(record["input_token_ids"]) + 1280 > model.config.max_position_embeddings:
                     raise ValueError("Prompt plus output budget exceeds context length; no input truncation applied.")
-                print(f"[{index}/23] Generating key {row['key']}...", flush=True)
                 torch.mps.synchronize()
                 started = time.perf_counter()
                 with torch.inference_mode():
@@ -204,10 +223,6 @@ def generate(args, manifest):
                 ids = generated.sequences[0, inputs["input_ids"].shape[1] :].tolist()
                 record.update(extract_response(tokenizer, ids, config))
                 record.update(status="generated", generation_seconds=time.perf_counter() - started)
-                print(
-                    f"  {len(ids)} tokens; finish={record['finish_reason']}; {record['generation_seconds']:.1f}s",
-                    flush=True,
-                )
             except (Exception, KeyboardInterrupt) as error:
                 record.update(status="error", error={"type": type(error).__name__, "message": str(error)})
                 raise
@@ -222,6 +237,9 @@ def generate(args, manifest):
                 elif record["status"] == "error":
                     manifest["generation_error_count"] += 1
                 write_json(args.output_dir / "manifest.json", manifest)
+            log_message(
+                manifest, f"  {len(ids)} tokens; finish={record['finish_reason']}; {record['generation_seconds']:.1f}s"
+            )
     manifest["status"] = "responses_generated"
 
 
@@ -259,6 +277,7 @@ def main():
         "expected_count": 23,
         "generated_count": 0,
         "generation_error_count": 0,
+        "logging_errors": [],
         "scored_count": 0,
         "scoring_status": "not_run",
         "native_lighteval_inference_run": False,
@@ -279,23 +298,23 @@ def main():
                 generate(args, manifest)
             except (Exception, KeyboardInterrupt) as error:
                 manifest.update(status="error", error={"type": type(error).__name__, "message": str(error)})
-                traceback.print_exc()
+                if manifest["logging_errors"]:
+                    manifest["error_stage"] = "logging"
                 code = 1
+                try:
+                    traceback.print_exc()
+                except Exception as logging_error:
+                    manifest["logging_errors"].append(
+                        {"type": type(logging_error).__name__, "message": str(logging_error)}
+                    )
             manifest.update(
                 ended_at_utc=datetime.now(timezone.utc).isoformat(),
                 elapsed_seconds=time.perf_counter() - started,
                 unattempted_count=23 - manifest["generated_count"] - manifest["generation_error_count"],
             )
-    manifest["artifact_sha256"] = {
-        path.name: digest(path)
-        for path in sorted(args.output_dir.iterdir())
-        if path.is_file() and path.name != "manifest.json"
-    }
-    write_json(args.output_dir / "manifest.json", manifest)
-    sums = "".join(f"{digest(path)}  {path.name}\n" for path in sorted(args.output_dir.iterdir()) if path.is_file())
-    (args.output_dir / "SHA256SUMS").write_text(sums, encoding="utf-8")
-    print(
-        json.dumps(
+    write_artifacts(args.output_dir, manifest)
+    if not manifest["logging_errors"]:
+        summary = json.dumps(
             {
                 key: manifest[key]
                 for key in (
@@ -312,8 +331,15 @@ def main():
             },
             indent=2,
         )
-    )
-    print(f"Saved: {args.output_dir.resolve()}")
+        try:
+            log_message(manifest, summary)
+            log_message(manifest, f"Saved: {args.output_dir.resolve()}")
+        except Exception as error:
+            if "error" not in manifest:
+                manifest.update(error={"type": type(error).__name__, "message": str(error)}, error_stage="logging")
+            manifest["status"] = "error"
+            code = 1
+            write_artifacts(args.output_dir, manifest)
     return code
 
 
