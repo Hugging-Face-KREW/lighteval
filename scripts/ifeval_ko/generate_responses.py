@@ -160,7 +160,7 @@ def generate(args, manifest):
     print("Loading the pinned Qwen model on MPS...", flush=True)
     model = (
         AutoModelForCausalLM.from_pretrained(
-            MODEL_ID, revision=MODEL_REVISION, dtype=torch.float16, trust_remote_code=False
+            MODEL_ID, revision=MODEL_REVISION, torch_dtype=torch.float16, trust_remote_code=False
         )
         .to("mps")
         .eval()
@@ -204,21 +204,23 @@ def generate(args, manifest):
                 ids = generated.sequences[0, inputs["input_ids"].shape[1] :].tolist()
                 record.update(extract_response(tokenizer, ids, config))
                 record.update(status="generated", generation_seconds=time.perf_counter() - started)
-                manifest["generated_count"] += 1
-                manifest["length_limited_count"] += int(record["finish_reason"] == "length")
-                manifest["empty_response_count"] += int(not record["response"].strip())
                 print(
                     f"  {len(ids)} tokens; finish={record['finish_reason']}; {record['generation_seconds']:.1f}s",
                     flush=True,
                 )
             except (Exception, KeyboardInterrupt) as error:
                 record.update(status="error", error={"type": type(error).__name__, "message": str(error)})
-                manifest["generation_error_count"] += 1
                 raise
             finally:
                 responses.write(json.dumps(record, ensure_ascii=False) + "\n")
                 responses.flush()
                 os.fsync(responses.fileno())
+                if record["status"] == "generated":
+                    manifest["generated_count"] += 1
+                    manifest["length_limited_count"] += int(record["finish_reason"] == "length")
+                    manifest["empty_response_count"] += int(not record["response"].strip())
+                elif record["status"] == "error":
+                    manifest["generation_error_count"] += 1
                 write_json(args.output_dir / "manifest.json", manifest)
     manifest["status"] = "responses_generated"
 
