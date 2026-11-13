@@ -21,6 +21,13 @@ original Ko results and a live run of the pinned original evaluator.
 - Full pinned dataset formatting: **342/342 Docs**, preserving the original
   keys, prompts, kwargs and **481 ordered instruction occurrences**. This is
   dataset formatting validation, not model response scoring.
+- Saved Qwen responses: the original Ko evaluator, ported scorer and registered
+  task agree on strict and loose judgments for **23/23 prompts** and
+  **40/40 instruction occurrences**. All four native corpus metrics match the
+  original Ko results exactly. The saved response verifier's **22 unit tests pass**.
+  See [validation with saved model responses](#validation-with-saved-model-responses-23-selected-prompts).
+
+The following table shows the **156 fixed response regression results**.
 
 | Metric | Original Ko | Ported scorer | Registered task | Absolute error |
 | --- | --- | --- | --- | --- |
@@ -29,7 +36,7 @@ original Ko results and a live run of the pinned original evaluator.
 | `prompt_level_loose_acc` | 79/156 | 79/156 | 79/156 | 0 |
 | `inst_level_loose_acc` | 142/247 | 142/247 | 142/247 | 0 |
 
-The integrated task implementation was validated at
+The 156-case regression used the integrated task implementation at
 `21faccc0f27d35da37dd849894f37b0337b43edb`. The reference uses the audit's explicit
 `isolated-source` import mode, retaining its original imports and source bytes;
 the archived reference run used `full-package`. The direct scorer and registered
@@ -42,15 +49,134 @@ This optional attachment comparison is separate from locally executing the task.
 
 ## Remaining validation
 
-English/French runtime regression, the 23-item model integration and the full
-342-item model evaluation have not been run in this suite. Saved model responses
-are required for those model evaluations: first compare all 23 prompts and 40
-instructions, then proceed to all 342 prompts and 481 instructions after the
-23-item checks pass and the full responses are available. Pass identical saved
-assistant responses to both evaluators and record generation settings and errors.
+English and French runtime regression, native Lighteval model inference and
+evaluation of the full 342-prompt split remain pending. The comparison of the
+23 saved model responses is complete, as described below. The verifier in this
+section accepts only the agreed selection of 23 prompts. Comparing the full split
+will require saved responses for all 342 prompts and 481 instruction occurrences,
+along with a validation tool that accepts the full dataset. Use the same saved
+assistant responses for the original Ko evaluator and both Lighteval paths,
+and record the generation settings and any errors.
 
-The verifier checks dataset formatting through the task API. It does not run
-`lighteval tasks inspect`; CLI inspection outputs remain separate PR evidence.
+`verify_registered_task.py` checks dataset formatting through the task API.
+Output from `lighteval tasks inspect` is tracked separately as PR evidence.
+
+## Validation with saved model responses (23 selected prompts)
+
+[`verify_model_responses.py`](verify_model_responses.py) evaluates the 23 saved
+`qwen-23-001` responses attached to [PR #5](https://github.com/Hugging-Face-KREW/lighteval/pull/5).
+It runs in a CPU Lighteval environment without loading model weights or
+generating new responses. Each saved response is evaluated through three paths:
+
+1. The original Ko evaluator at revision
+   `54199e3801116897697babf341865741dcd06fc8`.
+2. A direct call to the ported `scoring.score_response` function.
+3. The registered `ifeval_ko|0` task, using `Registry`, Doc formatting,
+   `ModelResponse`, `compute_sample` and native corpus aggregation.
+
+The original Ko evaluator runs on the saved responses, and its actual outputs
+serve as the reference. This comparison is separate from the 156 fixed response
+regression cases and their predefined expectations.
+
+All three paths agreed on every strict and loose judgment: **23/23 prompts**
+and **40/40 instruction occurrences** for each mode. These agreement counts
+measure consistency between the evaluation paths. The table below shows the
+model's scores. Numerators and denominators match across all three paths, and
+each native corpus metric has an absolute error of **0** relative to the original
+Ko result, within the required tolerance of `1e-12`.
+
+| Metric | Value in all three paths | Native absolute error |
+| --- | --- | --- |
+| `prompt_level_strict_acc` | 6/23 | 0 |
+| `inst_level_strict_acc` | 19/40 | 0 |
+| `prompt_level_loose_acc` | 9/23 | 0 |
+| `inst_level_loose_acc` | 23/40 | 0 |
+
+There were no missing records, scoring errors, aggregation errors or unresolved
+differences. The response for key `1127`, which reached the token limit, remains
+included in the comparison and metric denominators.
+
+The verifier passes each saved response verbatim, without additional whitespace
+removal, normalization or Markdown cleanup. The original Ko scoring rules,
+including NFC normalization and loose matching, still run inside each evaluator.
+Repeated instruction IDs are preserved by comparing
+`(key, instruction_index, instruction_id)`, where `instruction_index` starts at
+zero. The JSON report includes strict and loose judgments from all three paths
+for each of the 40 instruction occurrences.
+
+Immediately before each of the 69 scoring calls, the verifier calls
+`random.seed(0)` and sets `langdetect.DetectorFactory.seed` to `0`. The report
+records the input and response hashes, seed values and Python RNG state hash
+for every call. Before scoring, the verifier checks:
+
+- Checksums for all seven saved run files and the artifact hashes in the manifest.
+- The agreed 23 keys and their order, plus 40 instruction occurrences covering
+  21 instruction types.
+- Each response hash and the original prompt, key, ordered instruction IDs and
+  kwargs against the Ko dataset at the pinned revision.
+- The registered Doc's source fields, using hashes that preserve JSON types so
+  that a change from `1` to `true`, for example, is detected.
+
+When the original ZIP and its published digest are supplied, the verifier also
+checks the archive hash and compares the extracted files with the archive
+contents byte for byte. It records the generation revision and archived script
+hash separately from the evaluation code. The archived generator may predate
+the fixes in the current checkout.
+
+Use the audit and source directories described in [Reproduction](#reproduction).
+Download and extract the original attachment, then choose a new output directory.
+Run the following command from the Lighteval repository root:
+
+```bash
+KO_RUN_DIR=/path/to/qwen-23-001
+KO_ARCHIVE=/path/to/qwen-23-001.zip
+KO_AUDIT=/path/to/pinned-checker-audit
+KO_SOURCES=/path/to/restored-audit-sources
+PYTHONDONTWRITEBYTECODE=1 python3 tests/ifeval_ko/verify_model_responses.py \
+  --run-dir "$KO_RUN_DIR" \
+  --archive "$KO_ARCHIVE" \
+  --archive-sha256 a28e35bde3327a05efa9c255c228fa5ea2e711328e6e997c654d5f3b4f9e0e05 \
+  --audit-dir "$KO_AUDIT" --source-root "$KO_SOURCES" \
+  --output-dir outputs/ifeval_ko/qwen-23-parity-001
+```
+
+The published digest is available in the
+[PR #5 ZIP checksum attachment](https://github.com/user-attachments/files/34706603/qwen-23-001.zip.sha256.txt).
+The output directory contains `model-response-parity.json`,
+`model-response-parity.md`, `run.log` and `SHA256SUMS`. The JSON report records
+individual judgments, all four metrics with their numerators, denominators and
+values, all mismatches and the first input needed to reproduce a failure. It also
+records input and source hashes, code revisions, package versions and the
+execution command. Original inputs are preserved, and an existing output
+directory cannot be reused.
+
+Missing, duplicate or reordered keys, altered inputs or hashes, generation
+errors and scoring failures produce a nonzero exit status. This comparison
+requires valid results for every input, so identical exceptions in all three
+paths still count as failures. If a scoring call fails, the verifier keeps the
+individual results but does not report metrics for a reduced set of prompts.
+The expected denominators remain 23 prompts and 40 instruction occurrences.
+
+If native aggregation fails during setup or computation, the report retains
+the individual judgments and full numerators and denominators, with the error
+recorded for each affected metric. A failure in corpus aggregation also includes
+all 23 original inputs and responses for reproduction. An unexpected interruption
+during scoring preserves completed records and the input being processed.
+These failures produce diagnostic reports and a nonzero exit status.
+
+A run with a logging failure can be evaluated if all 23 generated responses
+were saved and pass the completeness checks. Successfully generated empty
+responses are retained. Generation failures cannot be replaced with empty
+responses to satisfy the expected record count.
+
+The [22 verifier unit tests](../unit/tasks/test_ifeval_ko_model_responses.py) cover
+input and archive integrity, repeated instruction IDs, incorrect denominators
+and corpus aggregation, seed resets before each call, response and Doc changes,
+scoring exceptions, interrupted execution and diagnostic reports. Run them with:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 tests/unit/tasks/test_ifeval_ko_model_responses.py
+```
 
 ## Scoring behavior
 
