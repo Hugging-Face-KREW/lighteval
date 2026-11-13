@@ -170,7 +170,8 @@ def load_run(directory, archive=None, archive_sha256=None):
         "Manifest artifact hashes differ",
     )
     selected = read(directory / "selected-samples.json")
-    records = [json.loads(line) for line in (directory / "responses.jsonl").read_text(encoding="utf-8").splitlines()]
+    with (directory / "responses.jsonl").open(encoding="utf-8") as stream:
+        records = [json.loads(line) for line in stream]
     keys = agreed_keys()
     require(selection["keys"] == keys, "Selection differs from the agreed 23 keys/order")
     require(len(records) == len(selected) == EXPECTED_PROMPTS, "Missing or extra prompt records")
@@ -373,6 +374,8 @@ def score_records(records, reference, task, scoring, response_class, progress=No
         if progress is not None:
             progress["active_input"] = {**raw_input(record), "response": record["response"]}
         rows.append(score_record(record, engines, mismatches))
+        if progress is not None and mismatches and progress.get("first_mismatch") is None:
+            progress["first_mismatch"] = {**copy.deepcopy(mismatches[0]), "input": progress["active_input"]}
     if progress is not None:
         progress.pop("active_input", None)
     errors = sum("error" in row[engine] for row in rows for engine in ENGINES)
@@ -605,12 +608,14 @@ def main(argv=None):
                     report["metrics_status"] = "INCOMPLETE"
                 active = report.pop("active_input", None)
                 if active is not None:
-                    report["first_mismatch"] = {
-                        "key": active["key"],
-                        "source": "execution",
-                        "error": report["error"],
-                        "input": active,
-                    }
+                    report["execution_error_input"] = active
+                    if report["first_mismatch"] is None:
+                        first = (
+                            copy.deepcopy(report["mismatches"][0])
+                            if report["mismatches"]
+                            else {"key": active["key"], "source": "execution", "error": report["error"]}
+                        )
+                        report["first_mismatch"] = {**first, "input": active}
                 traceback.print_exc()
     report["finished_at_utc"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     write_reports(args.output_dir, report)

@@ -226,6 +226,23 @@ class ModelResponseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Archive/run mismatch"):
             self.verifier.load_run(directory, archive, self.verifier.sha(archive))
 
+    def test_unicode_line_separators_in_responses_are_preserved(self):
+        for separator in ("\u2028", "\u2029", "\u0085"):
+            with self.subTest(separator=f"U+{ord(separator):04X}"):
+                directory, records = self.make_run()
+                response = records[0]["response"] + f"before{separator}after"
+                records[0].update(
+                    response=response,
+                    scoring_response=response,
+                    response_sha256=hashlib.sha256(response.encode("utf-8")).hexdigest(),
+                )
+                self.write_records(directory, records)
+                self.refresh_hashes(directory)
+                archive = self.make_archive(directory)
+                result = self.verifier.load_run(directory, archive, self.verifier.sha(archive))
+                self.assertEqual(result["records"], records)
+                self.verifier.check_source_rows(result["records"], self.source_rows)
+
     def test_checksum_and_response_hash_tampering_are_rejected(self):
         for rehash in (False, True):
             with self.subTest(rehash=rehash):
@@ -596,8 +613,51 @@ class ModelResponseTests(unittest.TestCase):
         self.assertEqual(report["status"], "ERROR")
         self.assertEqual(len(report["results"]), 1)
         self.assertEqual(report["first_mismatch"]["input"]["response"], records[1]["response"])
+        self.assertEqual(report["execution_error_input"]["key"], records[1]["key"])
         self.assertEqual(report["metrics"], {})
         self.assertEqual(report["metrics_status"], "INCOMPLETE")
+
+    def test_interruption_preserves_earlier_mismatch_and_separate_execution_input(self):
+        directory, records = self.make_run()
+        reference, task, scoring, response_class, _ = self.engines()
+        direct = scoring.score_response
+
+        def different(prompt, ids, kwargs, text):
+            value = direct(prompt, ids, kwargs, text)
+            if prompt == records[0]["prompt"]:
+                value["inst_level_strict_acc"][0] = False
+                value["prompt_level_strict_acc"] = all(value["inst_level_strict_acc"])
+            return value
+
+        scoring.score_response = different
+        calls = 0
+
+        def interrupt():
+            nonlocal calls
+            calls += 1
+            if calls == 4:
+                raise RuntimeError("interrupted after an earlier mismatch")
+            return {"python": 0, "langdetect": 0, "python_state_sha256": "test"}
+
+        output = self.root / "mismatch-then-interruption"
+        with patch.object(self.verifier, "reset_seeds", side_effect=interrupt):
+            code, report = self.run_scoring_cli(directory, output, reference, task, scoring, response_class)
+        self.assertEqual(code, 1)
+        self.assertEqual(report["status"], "ERROR")
+        first = report["first_mismatch"]
+        self.assertEqual(first["key"], records[0]["key"])
+        self.assertEqual(first["source"], "direct_ported")
+        self.assertEqual(first["instruction_index"], 0)
+        self.assertEqual(first["input"], {**self.verifier.raw_input(records[0]), "response": records[0]["response"]})
+        self.assertEqual({key: value for key, value in first.items() if key != "input"}, report["mismatches"][0])
+        self.assertEqual(
+            report["execution_error_input"],
+            {**self.verifier.raw_input(records[1]), "response": records[1]["response"]},
+        )
+        self.assertEqual(report["error"]["message"], "interrupted after an earlier mismatch")
+        self.assertEqual(len(report["results"]), 1)
+        self.assertEqual(report["metrics_status"], "INCOMPLETE")
+        self.assertEqual(report["metrics"], {})
 
     def test_invalid_input_writes_failure_artifacts_without_loading_scorers(self):
         directory, _ = self.make_run()

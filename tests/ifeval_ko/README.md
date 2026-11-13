@@ -24,7 +24,7 @@ original Ko results and a live run of the pinned original evaluator.
 - Saved Qwen responses: the original Ko evaluator, ported scorer and registered
   task agree on strict and loose judgments for **23/23 prompts** and
   **40/40 instruction occurrences**. All four native corpus metrics match the
-  original Ko results exactly. The saved response verifier's **22 unit tests pass**.
+  original Ko results exactly. The saved response verifier's **24 unit tests pass**.
   See [validation with saved model responses](#validation-with-saved-model-responses-23-selected-prompts).
 
 The following table shows the **156 fixed response regression results**.
@@ -99,6 +99,7 @@ included in the comparison and metric denominators.
 The verifier passes each saved response verbatim, without additional whitespace
 removal, normalization or Markdown cleanup. The original Ko scoring rules,
 including NFC normalization and loose matching, still run inside each evaluator.
+Unicode line separators inside response strings are preserved when reading JSONL.
 Repeated instruction IDs are preserved by comparing
 `(key, instruction_index, instruction_id)`, where `instruction_index` starts at
 zero. The JSON report includes strict and loose judgments from all three paths
@@ -162,6 +163,8 @@ the individual judgments and full numerators and denominators, with the error
 recorded for each affected metric. A failure in corpus aggregation also includes
 all 23 original inputs and responses for reproduction. An unexpected interruption
 during scoring preserves completed records and the input being processed.
+If a mismatch occurred earlier, its reproduction input remains in `first_mismatch`;
+the interrupted input is saved separately as `execution_error_input`.
 These failures produce diagnostic reports and a nonzero exit status.
 
 A run with a logging failure can be evaluated if all 23 generated responses
@@ -169,7 +172,7 @@ were saved and pass the completeness checks. Successfully generated empty
 responses are retained. Generation failures cannot be replaced with empty
 responses to satisfy the expected record count.
 
-The [22 verifier unit tests](../unit/tasks/test_ifeval_ko_model_responses.py) cover
+The [24 verifier unit tests](../unit/tasks/test_ifeval_ko_model_responses.py) cover
 input and archive integrity, repeated instruction IDs, incorrect denominators
 and corpus aggregation, seed resets before each call, response and Doc changes,
 scoring exceptions, interrupted execution and diagnostic reports. Run them with:
