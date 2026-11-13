@@ -302,11 +302,15 @@ python3 -m venv "$KO_AUDIT/.venv"
 "$KO_AUDIT/.venv/bin/pip" install -r "$KO_AUDIT/requirements.lock.txt"
 "$KO_AUDIT/.venv/bin/python" "$KO_AUDIT/fetch_sources.py"
 "$KO_AUDIT/.venv/bin/python" -c \
-  'import nltk, sys; assert nltk.download("punkt_tab", download_dir=sys.argv[1], quiet=True)' \
+  'import nltk, sys; assert all(nltk.download(name, download_dir=sys.argv[1], quiet=True) for name in ("punkt", "punkt_tab"))' \
   "$KO_AUDIT/.cache/nltk_data"
 PYTHONDONTWRITEBYTECODE=1 "$KO_AUDIT/.venv/bin/python" tests/ifeval_ko/verify_scoring.py \
   --audit-dir "$KO_AUDIT" --source-root "$KO_AUDIT" --checker-mode ported
 ```
+
+Preload both NLTK resources during setup. Loading the registered task also imports
+the existing English IFEval utilities, which attempt to download missing `punkt`
+resources. Preloading them keeps the scoring run from writing to the source cache.
 
 The existing baseline `test_audit.py` validates the reference evidence, including
 negative controls. It does not execute the new scorer. `verify_scoring.py`
