@@ -124,37 +124,13 @@ reported separately; source inputs and all run-file hashes are always checked.
 
 ### Recorded full-split run
 
-The local `qwen-342-001` run generated **342/342 responses** with **0 generation
-errors, 0 unattempted prompts and 0 empty responses** in approximately **3,146.7
-seconds (52.4 minutes)**. Its actual model/tokenizer revision, complete generation
-configuration, float16 dtype, chat template, device, seed and batch size matched
-the historical PR #5 run. All 342 saved source rows matched the pinned Parquet.
+Results for `qwen-342-001`, including generation accounting, token-limited keys,
+tokenizer replay and scoring comparisons, are maintained in the
+[full-split validation record](../../tests/ifeval_ko/README.md#validation-with-full-split-saved-responses-342-prompts).
 
-The full run retained 12 token-limited responses, in source order:
-`1127, 19, 2015, 2464, 2485, 2515, 2749, 2844, 3223, 337, 3439, 3606`.
-The 23 prompts shared with PR #5 were generated again; all 23 response hashes
-matched the original saved responses.
-
-All seven run checksums passed. An independent tokenizer replay matched all 342
-rendered inputs, input token IDs, raw decoded outputs, scoring responses, hashes
-and finish reasons. The three scoring paths also matched every prompt and
-instruction decision; see the [full-split scoring results](../../tests/ifeval_ko/README.md#validation-with-full-split-saved-responses-342-prompts).
-
-The public response archive is `qwen-342-001-public.zip` (447,873 bytes), with SHA-256:
-
-```text
-8d398dfbe60656daa4c9cd20bda61a91120fcea86d7e3b9fcebb7c0c91e4ddbb
-```
-
-This run used a local working tree based on `9731595bb95455aa442403516114a44a39d740bd`.
-The manifest records that base and the uncommitted file list; the exact generator
-snapshot is included in the run. The evaluation report records the verifier and
-loaded task-source hashes separately. Original local records are preserved.
-Publication copies replace personal execution paths with portable placeholders
-and record the redaction explicitly. The public generation archive was replayed
-through all three scoring paths, preserving every judgment and metric value.
-Public archives and their regenerated checksums are prepared under ignored
-`outputs/ifeval_ko/public-release/` for manual attachment.
+Download the response and parity ZIPs from the
+[public attachments and checksums](../../tests/ifeval_ko/README.md#public-attachments-and-checksums).
+These files are attached to PR #7 rather than checked into the repository.
 
 ## Saved artifacts and integrity
 

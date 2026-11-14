@@ -24,14 +24,11 @@ original Ko results and a live run of the pinned original evaluator.
 - Saved Qwen responses: the original Ko evaluator, ported scorer and registered
   task agree on strict and loose judgments for **23/23 prompts** and
   **40/40 instruction occurrences**. All four native corpus metrics match the
-  original Ko results exactly. The saved response verifier's **29 unit tests pass**,
-  including five full-split controls; all **10 generator tests** also pass.
+  original Ko results exactly. The saved response verifier's unit tests pass,
+  including full-split controls; the generator tests also pass.
   See [validation with saved model responses](#validation-with-saved-model-responses-23-selected-prompts).
-- Full saved Qwen split: **342/342 prompt and 481/481 instruction judgments**
-  match in each mode across original Ko, direct ported scoring and the registered
-  task. All four native metric errors are **0**. Generation/scoring/aggregation
-  errors and unresolved mismatches are **0**; all 12 token-limited responses remain
-  included. See [full-split validation](#validation-with-full-split-saved-responses-342-prompts).
+- Full saved Qwen split: generation results, strict/loose agreement and all four
+  metrics are recorded in [full-split validation](#validation-with-full-split-saved-responses-342-prompts).
 
 The following table shows the **156 fixed response regression results**.
 
@@ -176,7 +173,7 @@ were saved and pass the completeness checks. Successfully generated empty
 responses are retained. Generation failures cannot be replaced with empty
 responses to satisfy the expected record count.
 
-The [29 verifier unit tests](../unit/tasks/test_ifeval_ko_model_responses.py) cover
+The [verifier unit tests](../unit/tasks/test_ifeval_ko_model_responses.py) cover
 input and archive integrity, repeated instruction IDs, incorrect denominators
 and corpus aggregation, seed resets before each call, response and Doc changes,
 scoring exceptions, interrupted execution and diagnostic reports. Run them with:
@@ -187,10 +184,20 @@ PYTHONDONTWRITEBYTECODE=1 python3 tests/unit/tasks/test_ifeval_ko_model_response
 
 ## Validation with full-split saved responses (342 prompts)
 
-The recorded `qwen-342-001` run generated all 342 responses with the same pinned
-Qwen model and complete generation settings as PR #5. Three-path replay passed:
-strict and loose each matched **342/342 prompt judgments** and **481/481
-instruction judgments**. The model's scores, identical in all three paths, are:
+The recorded `qwen-342-001` run generated **342/342 responses** with **0 generation
+errors, 0 unattempted prompts and 0 empty responses** in approximately **3,146.7
+seconds (52.4 minutes)**. Its actual model/tokenizer revision, complete generation
+configuration, float16 dtype, chat template, device, seed and batch size matched
+the historical PR #5 run. All saved source rows matched the pinned Parquet.
+The prompts shared with PR #5 were generated again; all 23 response hashes
+matched the original saved responses.
+
+The full run retained 12 token-limited responses, in source order:
+`1127, 19, 2015, 2464, 2485, 2515, 2749, 2844, 3223, 337, 3439, 3606`.
+
+Three-path replay passed: strict and loose each matched **342/342 prompt
+judgments** and **481/481 instruction judgments**. The model's scores, identical
+in all three paths, are:
 
 | Metric | Original Ko / ported / registered | Native absolute error |
 | --- | --- | --- |
@@ -200,17 +207,33 @@ instruction judgments**. The model's scores, identical in all three paths, are:
 | `inst_level_loose_acc` | 220/481 (0.45738046) | 0 |
 
 There were **0 scoring errors, 0 aggregation errors and 0 mismatches**. The full
-342/481 denominators include all 12 token-limited responses, including key 1127.
-Independent source/tokenizer checks also matched every saved input and extracted
-response. These are saved-response scoring results, with native Lighteval model
-inference still outside this validation.
+denominators include every token-limited response. All seven run checksums
+passed. An independent tokenizer replay matched every rendered input, input
+token sequence, raw decoded output, scoring response, hash and finish reason.
+These are saved-response scoring results, with native Lighteval model inference
+still outside this validation.
 
-Public attachments are `qwen-342-001-public.zip` and
-`qwen-342-parity-001-public.zip`, with corresponding `.zip.sha256.txt` files in
-`outputs/ifeval_ko/public-release/`. Publication copies explicitly mark personal
-execution-path redaction. Inputs, output token IDs, responses and judgments are
-unchanged. The public generation archive passed a fresh three-path replay with
-the same full denominators, zero errors and the four scores above.
+This run used a local working tree based on `9731595bb95455aa442403516114a44a39d740bd`.
+The manifest records that base and the uncommitted file list; the exact generator
+snapshot is included in the run. The evaluation report records the verifier and
+loaded task-source hashes separately. Original local records are preserved.
+Publication copies explicitly mark personal execution-path redaction. Inputs,
+output token IDs, responses and judgments are unchanged. The public generation
+archive passed a fresh three-path replay with the same full denominators, zero
+errors and the four scores above.
+
+### Public attachments and checksums
+
+The publication copies and their checksum files are attached to
+[PR #7](https://github.com/Hugging-Face-KREW/lighteval/pull/7), rather than checked
+into the repository. Download them using the links below:
+
+| Archive and checksum file | SHA-256 |
+| --- | --- |
+| [qwen-342-001-public.zip](https://github.com/user-attachments/files/34839513/qwen-342-001-public.zip) ([checksum](https://github.com/user-attachments/files/34839521/qwen-342-001-public.zip.sha256.txt)) | `8d398dfbe60656daa4c9cd20bda61a91120fcea86d7e3b9fcebb7c0c91e4ddbb` |
+| [qwen-342-parity-001-public.zip](https://github.com/user-attachments/files/34839530/qwen-342-parity-001-public.zip) ([checksum](https://github.com/user-attachments/files/34839550/qwen-342-parity-001-public.zip.sha256.txt)) | `81846baa55d5e64a5090ad80e26efd555727e1e15deb9e510a58d4a01405a368` |
+
+### Reproduce full-split validation
 
 Generate a fresh run with `scripts/ifeval_ko/generate_responses.py --scope full`,
 then select the same scope in the saved-response verifier:
