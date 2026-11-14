@@ -24,8 +24,14 @@ original Ko results and a live run of the pinned original evaluator.
 - Saved Qwen responses: the original Ko evaluator, ported scorer and registered
   task agree on strict and loose judgments for **23/23 prompts** and
   **40/40 instruction occurrences**. All four native corpus metrics match the
-  original Ko results exactly. The saved response verifier's **24 unit tests pass**.
+  original Ko results exactly. The saved response verifier's **29 unit tests pass**,
+  including five full-split controls; all **10 generator tests** also pass.
   See [validation with saved model responses](#validation-with-saved-model-responses-23-selected-prompts).
+- Full saved Qwen split: **342/342 prompt and 481/481 instruction judgments**
+  match in each mode across original Ko, direct ported scoring and the registered
+  task. All four native metric errors are **0**. Generation/scoring/aggregation
+  errors and unresolved mismatches are **0**; all 12 token-limited responses remain
+  included. See [full-split validation](#validation-with-full-split-saved-responses-342-prompts).
 
 The following table shows the **156 fixed response regression results**.
 
@@ -49,14 +55,12 @@ This optional attachment comparison is separate from locally executing the task.
 
 ## Remaining validation
 
-English and French runtime regression, native Lighteval model inference and
-evaluation of the full 342-prompt split remain pending. The comparison of the
-23 saved model responses is complete, as described below. The verifier in this
-section accepts only the agreed selection of 23 prompts. Comparing the full split
-will require saved responses for all 342 prompts and 481 instruction occurrences,
-along with a validation tool that accepts the full dataset. Use the same saved
-assistant responses for the original Ko evaluator and both Lighteval paths,
-and record the generation settings and any errors.
+English and French runtime regression and native Lighteval model inference remain
+pending. The verifier supports both the default 23-prompt selection and explicit
+`--scope full` for all 342 prompts and 481 instruction occurrences. Use the same
+saved assistant responses for the original Ko evaluator and both Lighteval paths,
+and record the generation settings and any errors. Full-split execution results
+are recorded separately from the historical 23-prompt results below.
 
 `verify_registered_task.py` checks dataset formatting through the task API.
 Output from `lighteval tasks inspect` is tracked separately as PR evidence.
@@ -172,7 +176,7 @@ were saved and pass the completeness checks. Successfully generated empty
 responses are retained. Generation failures cannot be replaced with empty
 responses to satisfy the expected record count.
 
-The [24 verifier unit tests](../unit/tasks/test_ifeval_ko_model_responses.py) cover
+The [29 verifier unit tests](../unit/tasks/test_ifeval_ko_model_responses.py) cover
 input and archive integrity, repeated instruction IDs, incorrect denominators
 and corpus aggregation, seed resets before each call, response and Doc changes,
 scoring exceptions, interrupted execution and diagnostic reports. Run them with:
@@ -180,6 +184,68 @@ scoring exceptions, interrupted execution and diagnostic reports. Run them with:
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 tests/unit/tasks/test_ifeval_ko_model_responses.py
 ```
+
+## Validation with full-split saved responses (342 prompts)
+
+The recorded `qwen-342-001` run generated all 342 responses with the same pinned
+Qwen model and complete generation settings as PR #5. Three-path replay passed:
+strict and loose each matched **342/342 prompt judgments** and **481/481
+instruction judgments**. The model's scores, identical in all three paths, are:
+
+| Metric | Original Ko / ported / registered | Native absolute error |
+| --- | --- | --- |
+| `prompt_level_strict_acc` | 117/342 (0.34210526) | 0 |
+| `inst_level_strict_acc` | 207/481 (0.43035343) | 0 |
+| `prompt_level_loose_acc` | 125/342 (0.36549708) | 0 |
+| `inst_level_loose_acc` | 220/481 (0.45738046) | 0 |
+
+There were **0 scoring errors, 0 aggregation errors and 0 mismatches**. The full
+342/481 denominators include all 12 token-limited responses, including key 1127.
+Independent source/tokenizer checks also matched every saved input and extracted
+response. These are saved-response scoring results, with native Lighteval model
+inference still outside this validation.
+
+Public attachments are `qwen-342-001-public.zip` and
+`qwen-342-parity-001-public.zip`, with corresponding `.zip.sha256.txt` files in
+`outputs/ifeval_ko/public-release/`. Publication copies explicitly mark personal
+execution-path redaction. Inputs, output token IDs, responses and judgments are
+unchanged. The public generation archive passed a fresh three-path replay with
+the same full denominators, zero errors and the four scores above.
+
+Generate a fresh run with `scripts/ifeval_ko/generate_responses.py --scope full`,
+then select the same scope in the saved-response verifier:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python tests/ifeval_ko/verify_model_responses.py \
+  --scope full --run-dir outputs/ifeval_ko/qwen-342-001 \
+  --audit-dir "$KO_AUDIT" --source-root "$KO_SOURCES" \
+  --output-dir outputs/ifeval_ko/qwen-342-parity-001
+```
+
+See the [generation guide](../../scripts/ifeval_ko/README.md#generate-the-full-342-prompt-split)
+for the pinned model/configuration and artifact contract. The verifier does not
+generate new responses or load model weights. `--scope selected` remains the
+default, including support for the original PR #5 manifest without a scope field.
+Selected and full artifacts cannot be mixed.
+
+The full scope requires all 342 unique keys in the pinned source split's exact
+order, all 481 instruction occurrences and unchanged source fields, including
+every occurrence of a repeated instruction ID. Source membership and order are
+checked against the hash-verified pinned Parquet, not inferred from the saved
+manifest. A self-consistent reordered run is rejected before any scoring call.
+
+All three paths receive each response verbatim, including empty and token-limited
+responses. Seeds are reset before each call. Prompt and instruction metrics use
+denominators of 342 and 481, respectively. Any missing record, scoring exception,
+invalid judgment, aggregation error or unresolved mismatch produces a nonzero
+exit status. A scoring exception never produces aggregate scores for a smaller
+subset. Reports and failure diagnostics show the requested scope and its full
+denominators, even when execution is interrupted.
+
+The full-split negative controls additionally check source order, scope mismatch,
+missing/duplicate records, wrong instruction counts, a late generation/log error,
+and scoring errors without denominator reduction. The original selected-scope
+regressions remain in the same test suites.
 
 ## Scoring behavior
 
